@@ -46,44 +46,100 @@ impl E {
     fn neg(expression: Box<E>) -> Box<Self> { Box::new(E::Neg(expression)) }
     fn mul(left: Box<E>, right: Box<E>)-> Box<Self> { Box::new(E::Mul(left, right)) }
     fn inv(expression: Box<E>) -> Box<Self> {Box::new(E::Inv(expression))}
-    fn constant(constant : Const) -> Box<Self> { Box::new(constant) }
+    fn constant(constant : Const) -> Box<Self> { Box::new(E::Const(constant))}
     fn func(name: String, args: Box<E>) -> Box<Self> { Box::new(E::Func {name, args})}
-    fn var(var: Var) -> Box<Self> { Box::new(var) }
+    fn var(var: Var) -> Box<Self> { Box::new(E::Var(var)) }
 
     fn to_string(&self) -> String {
         match self {
-            E::Add(left, right) => format!("({} + {})", left.to_string(), right.to_string()),
-            E::Neg(expression) => format!("-{}", expression.to_string()),
-            E::Mul(left, right) => format!("({} * {})", left.to_string(), right.to_string()),
-            E::Inv(expression) => format!("(inv {})", expression.to_string()),
-            E::Const(constant) => constant.to_string(),
-            E::Func { name, args } => format!("{}({})", name, args.to_string()),
-            E::Var(var) => var.to_string()
+            Self::Add(left, right) => format!("({} + {})", left.to_string(), right.to_string()),
+            Self::Neg(expression) => format!("-({})", expression.to_string()),
+            Self::Mul(left, right) => format!("({} * {})", left.to_string(), right.to_string()),
+            Self::Inv(expression) => format!("1/({})", expression.to_string()),
+            Self::Const(constant) => constant.to_string(),
+            Self::Func { name, args } => format!("{}({})", name, args.to_string()),
+            Self::Var(var) => var.to_string()
         }
     }
 
     fn arg_count(&self) -> u32 {
         match self {
-            E::Const(_) | E::Var(_) => 0,
-            E::Neg(_) | E::Inv(_) | E::Func(_, _) => 1,
-            E::Add(_, _) | E::Mul(_, _) => 2
+            Self::Const(_) | Self::Var(_) => 0,
+            Self::Neg(_) | Self::Inv(_) | Self::Func{name: _, args: _} => 1,
+            Self::Add(_, _) | Self::Mul(_, _) => 2
         }
     }
 
-    fn diff(&self, by: Var) -> Box<Self> {
+    fn diff(self, by: Var) -> Box<Self> {
+        // since self is &E - a reference, hence on binding we get references as well
         match self {
-            E::Const(_) => constant(Const::Numeric(0)),
-            E::Var(var) => if var == by {constant(Const::Numeric(1))} else {constant(Const::Numeric(0))},
-            E::Func { name, args } => {}
-            E::Add(left, right) => E::add(left.diff(by), right.diff(by)),
-            E::Neg(expression) => E::neg(expression.diff(by)),
-            E::Mul(left, right) => E::add(E::mul(left.diff(by), right), E::mul(left, right.diff(by))),
-            E::Inv(expression) => E::mul(E::neg(E::inv((E::mul(expression, expression)))), expression.diff(by)),
+            Self::Const(_) => Self::constant(Const::Numeric(0)),
+            Self::Var(var) => if var == by { Self::constant(Const::Numeric(1)) } else { Self::constant(Const::Numeric(0)) },
+            Self::Add(left, right) => Self::add(left.clone().diff(by.clone()), right.clone().diff(by)),
+            Self::Neg(expression) => Self::neg(expression.diff(by)),
+            Self::Mul(left, right) => Self::add(Self::mul(left.clone().diff(by.clone()), right.clone()), Self::mul(left.clone(), right.clone().diff(by))),
+            Self::Inv(expression) => Self::mul(Self::neg(Self::inv(Self::mul(expression.clone(), expression.clone()))), expression.clone().diff(by)),
+            Self::Func { name, args } => Self::mul(Self::func(format!("{}_{}", name, by.to_string()), args.clone()), args.diff(by))
+        }
+    }
+
+    fn unpack_inv_inv(self) -> Option<Box<Self>> {
+        let Self::Inv(inner) = self else {return None;};
+        let Self::Inv(expression) = *inner else {return None;};
+        Some(expression)
+    }
+
+    fn uninv(self: Box<Self>) -> Box<Self> {
+        let mut expression = self;
+        while let Some(inner) = expression.clone().unpack_inv_inv() {
+            expression = inner;
+        }
+        expression
+    }
+
+    fn unpack_neg_neg(self) -> Option<Box<Self>> {
+        if let Self::Neg(inner) = self && let Self::Neg(expression) = *inner{
+            return Some(expression);
+        }
+        None
+    }
+    fn unneg(self: Box<Self>) -> Box<Self> {
+        let mut expression = self;
+        while let Some(inner) = expression.clone().unpack_neg_neg() {
+            expression = inner;
+        }
+        expression
+    }
+    fn substitute(self, name: &str, value: Box<Self>) -> Box<Self> {
+        match self {
+            Self::Const(Const::Named(string)) if string == name => value,
+            Self::Const(constant) => Self::constant(constant),
+            Self::Var(var) => Self::var(var),
+            Self::Add(left, right) => Self::add(left.substitute(name, value.clone()), right.substitute(name, value)),
+            Self::Neg(expression) => Self::neg(expression.substitute(name, value)),
+            Self::Mul(left, right) => Self::mul(left.substitute(name, value.clone()), right.substitute(name, value)),
+            Self::Inv(expression) => Self::inv(expression.substitute(name, value)),
+            Self::Func { name: f_name, args } => Self::func(f_name, args.substitute(name, value)),
         }
     }
 }
 
-fn main() {}
+fn main() {
+    let expr = E::add(
+        E::add(
+            E::mul(E::var(Var::X), E::constant(Const::Named("pi".to_string()))),
+            E::func("f".to_string(), E::var(Var::Y)),
+        ),
+        E::var(Var::Z),
+    );
+    println!("expr: {}", expr.to_string());
+    println!("args: {}", expr.arg_count());
+    println!("d/dX: {}", expr.clone().diff(Var::X).to_string());
+    println!("pi := 3: {}", expr.substitute("pi", E::constant(Const::Numeric(3))).to_string());
+
+    let layered = E::neg(E::neg(E::inv(E::inv(E::var(Var::Y)))));
+    println!("simplify: {}", layered.unneg().uninv().to_string());
+}
 
 #[cfg(test)]
 mod tests {
