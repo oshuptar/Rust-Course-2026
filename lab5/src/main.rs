@@ -74,7 +74,7 @@ impl Seq<Nothing, Nothing>{
 }
 
 impl Expr for u64 {
-    fn exec_expr(&mut self, context: &Context) -> u64 {
+    fn exec_expr(&mut self, _context: &Context) -> u64 {
         *self
     }
 }
@@ -191,7 +191,15 @@ impl<'a, T:Expr> Expr for Volatile<'a, T>
 }
 
 
-fn main() {}
+fn main() {
+    let ctx: Context = HashMap::from([("x", 0), ("y", 10)]);
+    let mut a: u64 = 0;
+    print(save_in(&mut a, when(constant("y"), 7u64, 8u64))).exec_stmt(&ctx);
+    seq(print(read_from(&a)), nothing()).shorten_1().exec_stmt(&ctx);
+    seq(nothing(), print(1u64)).shorten_2().exec_stmt(&ctx);
+    seq(nothing(), nothing()).collapse().exec_stmt(&ctx);
+    repeat::<2, _>(print(volatile(&mut a, "y", when(constant("y"), 100u64, 200u64)))).exec_stmt(&ctx);
+}
 
 #[cfg(test)]
 mod tests {
